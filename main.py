@@ -1,88 +1,169 @@
 import os
 import asyncio
 import yt_dlp
-import json
 import random
 from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 
-# --- CONFIG ---
-TOKEN = os.environ.get('TOKEN')
-ADMIN_ID = int(os.environ.get('ADMIN_ID', 0)) # Add your ID in Render Env Vars
-DURDEN_FOLDER = 'downloads'
-COOKIE_FILE = 'cookies.txt'
-STATS_FILE = 'stats.json'
+# --- CONFIGURATION ---
+TOKEN = '8713046713:AAGU7NDi1ru8lhpVobxD5oFLtAoEU4rgL10'
+DURDEN_FOLDER = '/sdcard/Durden'
+ADMIN_ID = 6236244844  # <--- REPLACE THIS with your real Telegram ID (from @userinfobot)
+
+# Files for tracking
+USERS_FILE = 'users.txt'
+SONGS_FILE = 'songs_log.txt'
 
 if not os.path.exists(DURDEN_FOLDER):
     os.makedirs(DURDEN_FOLDER)
 
-# --- STATS LOGIC ---
-def load_stats():
-    if os.path.exists(STATS_FILE):
-        with open(STATS_FILE, 'r') as f:
-            return json.load(f)
-    return {"total": 0, "users": []}
+# --- STATS LOGGING LOGIC ---
+def log_activity(user_id, song_title=None):
+    # Log Unique User
+    if not os.path.exists(USERS_FILE): open(USERS_FILE, 'w').close()
+    with open(USERS_FILE, 'r') as f:
+        users = f.read().splitlines()
+    if str(user_id) not in users:
+        with open(USERS_FILE, 'a') as f:
+            f.write(f"{user_id}\n")
+    
+    # Log Song Title (if provided)
+    if song_title:
+        with open(SONGS_FILE, 'a') as f:
+            f.write(f"{song_title}\n")
 
-def save_stats(stats):
-    with open(STATS_FILE, 'w') as f:
-        json.dump(stats, f)
+# --- UI HELPERS ---
+LOADING_PHRASES = [
+    "ðŸŽ¸ Tuning the instruments...",
+    "ðŸ›°ï¸ Connecting to the satellite...",
+    "ðŸ’Ž Mining for audio gold...",
+    "ðŸŽ§ Polishing the MP3...",
+    "ðŸ”¥ Durden is working hard...",
+    "âš¡ Almost there, hang tight!"
+]
 
-# --- HANDLERS ---
+def get_progress_bar(percentage):
+    length = 10
+    filled = int(length * percentage / 100)
+    bar = 'â—' * filled + 'â—‹' * (length - filled)
+    return f"{bar} {percentage}%"
+
+async def progress_hook(d, update, context, status_msg):
+    if d['status'] == 'downloading':
+        p = d.get('_percent_str', '0%').replace('%','').strip()
+        try:
+            p_float = float(p)
+            bar = get_progress_bar(p_float)
+            phrase = random.choice(LOADING_PHRASES)
+            await context.bot.edit_message_text(
+                chat_id=update.message.chat_id,
+                message_id=status_msg.message_id,
+                text=f"{phrase}\n\n{bar}\nðŸš€ Speed: {d.get('_speed_str', 'N/A')}"
+            )
+        except:
+            pass
+
+# --- COMMAND HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status = "✅ Stealth Active" if os.path.exists(COOKIE_FILE) else "⚠️ No cookies.txt"
-    await update.message.reply_text(f"⚡ **DURDEN V11** ⚡\nStatus: {status}\n\nSend a link!")
+    log_activity(update.effective_user.id)
+    await update.message.reply_text(
+        "âš¡ **Welcome to Durden Downloader** âš¡\n\n"
+        "Send me a YouTube link and I'll handle the rest.\n"
+    )
 
-async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only command to see bot performance"""
     if update.effective_user.id != ADMIN_ID:
-        return
-    data = load_stats()
-    await update.message.reply_text(f"📊 **Stats**\nUsers: {len(data['users'])}\nDownloads: {data['total']}")
+        return # Ignore if not admin
+
+    # Count Users
+    user_count = 0
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, 'r') as f:
+            user_count = len(f.read().splitlines())
+    
+    # Count Total Downloads
+    song_count = 0
+    last_song = "None yet"
+    if os.path.exists(SONGS_FILE):
+        with open(SONGS_FILE, 'r') as f:
+            songs = f.read().splitlines()
+            song_count = len(songs)
+            if songs: last_song = songs[-1]
+
+    stats_text = (
+        "ðŸ“Š **DURDEN ADMIN PANEL**\n\n"
+        f"ðŸ‘¤ **Unique Users:** {user_count}\n"
+        f"ðŸŽµ **Total Downloads:** {song_count}\n"
+        f"ðŸŽ§ **Last Track:** `{last_song}`"
+    )
+    await update.message.reply_text(stats_text, parse_mode='Markdown')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
-    if "youtube.com" not in url and "youtu.be" not in url: return 
+    if "youtube.com" not in url and "youtu.be" not in url:
+        return 
 
-    status_msg = await update.message.reply_text("🎬 Bypassing...")
+    status_msg = await update.message.reply_text("ðŸŽ¬ Initializing...")
 
-    # Aggressive Stealth & Format Fix
+    def my_hook(d):
+        loop = asyncio.get_event_loop()
+        loop.create_task(progress_hook(d, update, context, status_msg))
+
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': f'{DURDEN_FOLDER}/%(title)s.%(ext)s',
-        'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '128'}],
+        'progress_hooks': [my_hook],
+        'writethumbnail': True,
+        'postprocessors': [
+            {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'},
+            {'key': 'EmbedThumbnail'},
+            {'key': 'FFmpegMetadata'},
+        ],
         'quiet': True,
-        'cookiefile': COOKIE_FILE if os.path.exists(COOKIE_FILE) else None,
-        'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        'nocheckcertificate': True,
-        'ignoreerrors': False,
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            file_path = os.path.splitext(ydl.prepare_filename(info))[0] + ".mp3"
+            temp_name = ydl.prepare_filename(info)
+            final_name = os.path.splitext(temp_name)[0] + ".mp3"
+            song_title = info.get('title', 'Unknown Title')
         
-        await update.message.reply_audio(audio=open(file_path, 'rb'), title=info.get('title'))
-        
-        # Update Stats
-        stats = load_stats()
-        stats["total"] += 1
-        if update.effective_user.id not in stats["users"]:
-            stats["users"].append(update.effective_user.id)
-        save_stats(stats)
+        # Log this specific download
+        log_activity(update.effective_user.id, song_title)
 
-        os.remove(file_path)
+        await context.bot.edit_message_text(
+            chat_id=update.message.chat_id,
+            message_id=status_msg.message_id,
+            text="âœ¨ Done! Sending to your chat now..."
+        )
+
+        with open(final_name, 'rb') as audio_file:
+            await update.message.reply_audio(
+                audio=audio_file,
+                title=os.path.basename(final_name),
+                caption="Enjoy your music! ðŸŽµ"
+            )
+        
         await status_msg.delete()
+
+        if os.path.exists(final_name):
+            os.remove(final_name)
+        
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)[:150]}")
+        await update.message.reply_text(f"âŒ Error: {str(e)}")
+        if 'final_name' in locals() and os.path.exists(final_name):
+            os.remove(final_name)
 
 def main():
-    if not TOKEN: return
+    print("Durden Bot is running...")
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("stats", stats)) # New Stats Command
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.run_polling()
 
 if __name__ == '__main__':
     main()
-    
+        
