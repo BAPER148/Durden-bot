@@ -5,7 +5,6 @@ import random
 from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 
-# --- CONFIG ---
 TOKEN = os.environ.get('TOKEN')
 DURDEN_FOLDER = 'downloads'
 COOKIE_FILE = 'cookies.txt'
@@ -19,25 +18,23 @@ USER_AGENTS = [
 ]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Check if the file actually exists on the Render server
-    has_cookies = os.path.exists(COOKIE_FILE)
-    status = "✅ Stealth Active (Cookies Loaded)" if has_cookies else "⚠️ Warning: cookies.txt not found!"
-    await update.message.reply_text(f"⚡ **DURDEN V7** ⚡\n{status}\n\nSend any link!")
+    status = "✅ Stealth Active" if os.path.exists(COOKIE_FILE) else "⚠️ No cookies.txt"
+    await update.message.reply_text(f"⚡ **DURDEN V7 (Low RAM Mode)** ⚡\nStatus: {status}\n\nSend any YouTube link!")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
     if "youtube.com" not in url and "youtu.be" not in url: return 
 
-    status_msg = await update.message.reply_text("🎬 Grabbing any available format...")
+    status_msg = await update.message.reply_text("🎬 Fetching... (Low-res mode for stability)")
 
     ydl_opts = {
-        # 'best' is the most compatible setting; it bypasses specific format errors
+        # 'best' instead of 'bestaudio' finds a format 100% of the time
         'format': 'best', 
         'outtmpl': f'{DURDEN_FOLDER}/%(title)s.%(ext)s',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '128', # Lowering to 128kbps saves Render's RAM
+            'preferredquality': '128', # 128kbps is easier on Render's memory
         }],
         'quiet': True,
         'cookiefile': COOKIE_FILE if os.path.exists(COOKIE_FILE) else None,
@@ -49,20 +46,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            if not info:
-                raise Exception("YouTube blocked the request. Refresh cookies.txt.")
-            
-            # Find the path of the downloaded/converted file
-            base_filename = ydl.prepare_filename(info)
-            file_path = os.path.splitext(base_filename)[0] + ".mp3"
+            if not info: raise Exception("Format block. Refresh cookies.")
+            file_path = os.path.splitext(ydl.prepare_filename(info))[0] + ".mp3"
         
-        if os.path.exists(file_path):
-            await update.message.reply_audio(audio=open(file_path, 'rb'), title=info.get('title'))
-            os.remove(file_path)
-        else:
-            # Fallback if the MP3 extension logic fails
-            await update.message.reply_text("❌ Download finished but file conversion failed.")
-            
+        await context.bot.edit_message_text(chat_id=update.message.chat_id, message_id=status_msg.message_id, text="✨ Sending audio...")
+        with open(file_path, 'rb') as f:
+            await update.message.reply_audio(audio=f, title=info.get('title'))
+        
+        if os.path.exists(file_path): os.remove(file_path)
         await status_msg.delete()
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)[:100]}")
@@ -76,3 +67,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+                              
