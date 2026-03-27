@@ -50,17 +50,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status_msg = await update.message.reply_text("🎬 Initializing bypass...")
 
-    ydl_opts = {
-        'format': 'bestaudio/best',
+        ydl_opts = {
+        # This tells yt-dlp to try the best audio, or fallback to the next best thing
+        'format': 'bestaudio/best', 
         'outtmpl': f'{DURDEN_FOLDER}/%(title)s.%(ext)s',
         'progress_hooks': [lambda d: asyncio.get_event_loop().create_task(progress_hook(d, update, context, status_msg))],
-        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
         'quiet': True,
         'no_warnings': True,
         'cookiefile': COOKIE_FILE if os.path.exists(COOKIE_FILE) else None,
         'user_agent': random.choice(USER_AGENTS),
         'referer': 'https://www.google.com/',
-    }
+        # ADD THESE TWO LINES TO FIX YOUR ERROR:
+        'ignoreerrors': True,
+        'noplaylist': True,
+        }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
